@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ICU Bubble Chart with ASA Classifications</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    /* Overall layout: left = chart + button, right = write-up */
+    body {
+      font-family: "Helvetica Neue", Arial, sans-serif;
+      margin: 1rem;
+      background: #fff;
+      display: flex;
+      flex-wrap: wrap; /* so it wraps on smaller screens */
+    }
+    /* Left side */
+    #leftPane {
+      flex: 1;
+      min-width: 500px; /* ensure enough space for the chart */
+      margin-right: 2rem;
+    }
+    #chart {
+      margin: 1rem auto;
+      max-width: 900px;
+      position: relative; /* for tooltip positioning */
+    }
+    h1 {
+      text-align: center;
+      margin: 0;
+      padding: 0.5rem;
+    }
+    button {
+      display: block;
+      margin: 0 auto 1rem;
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    /* Bubble styles */
+    .bubble {
+      cursor: pointer;
+      stroke: #fff;
+      stroke-width: 1px;
+      transition: fill 0.2s;
+    }
+    text {
+      font-size: 0.8rem;
+      fill: #fff;
+      pointer-events: none; /* so hover is on the circle */
+      text-anchor: middle;
+      alignment-baseline: middle;
+    }
+    /* Tooltip */
+    .tooltip {
+      position: absolute;
+      background: #eee;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+      font-size: 0.9rem;
+    }
+    /* Right side: write-up (initially hidden) */
+    #writeUp {
+      flex: 1;
+      min-width: 300px;
+      display: none; /* hidden until button is clicked */
+      border-left: 1px solid #ccc;
+      padding-left: 1rem;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Left side (chart & button) -->
+  <div id="leftPane">
+    <h1>Which Preoperative Factors Lead to the Most ICU Admissions?</h1>
+    <button id="writeUpBtn">Write Up</button>
+
+    <div id="chart">
+      <svg width="900" height="600"></svg>
+      <div id="tooltip" class="tooltip"></div>
+    </div>
+  </div>
+
+  <!-- Right side: Write-Up (hidden by default) -->
+  <div id="writeUp">
+    <h2>Project Overview (Write up) </h2>
+    <p>
+        We began by cleaning the VitalDB dataset to identify which preoperative factors most strongly correlate with ICU admissions. From there, we narrowed down several key variables such as age, BMI, and ASA classifications that seemed particularly relevant. We then built a D3 based interactive bubble chart to display these factors, providing tooltips and a “Write Up” button to make the data exploration easier to comprehend. Along the way, we refined our data cleaning process, ensuring each category was clearly labeled and that larger admission numbers appeared with larger, darker bubbles.
+    </p>
+    <p>
+        We believe the hardest part will be figuring out how to structure all of our information and visualizations into a website that feels intuitive for different audiences. It can be tricky to keep everything organized in a way that allows visitors to absorb the data at their own pace without feeling overwhelmed. We plan on experimenting with different layouts and interactive features to find a balance between depth and accessibility. Another challenge is making sure the website remains consistent and easy to use. 
+    </p>
+  </div>
+
+  <script>
+    // ------------------------------------------------------------
+    // SAMPLE DATA (Replace with your actual ICU data)
+    // "category" = label on the bubble
+    // "value"    = number of ICU admissions
+    // "info"     = short descriptive phrase for the tooltip
+    // ------------------------------------------------------------
+    const data = [
+      { category: "Underweight", value: 20,  info: "BMI < 18.5" },
+      { category: "Normal",      value: 50,  info: "18.5 ≤ BMI < 25" },
+      { category: "Overweight",  value: 60,  info: "25 ≤ BMI < 30" },
+      { category: "Obese",       value: 85,  info: "BMI ≥ 30" },
+      { category: "ASA 1",       value: 15,  info: "ASA 1: Healthy" },
+      { category: "ASA 2",       value: 35,  info: "ASA 2: Mild disease" },
+      { category: "ASA 3",       value: 75,  info: "ASA 3: Severe disease" },
+      { category: "ASA 4",       value: 45,  info: "ASA 4: Severe disease that is a constant threat to life" },
+      { category: "ASA 5",       value: 10,  info: "ASA 5: Moribund patient" },
+      { category: "Hypertension",value: 40,  info: "Preop condition" },
+      { category: "Old",         value: 90,  info: "Age > 65" }
+    ];
+
+    const width  = 900;
+    const height = 600;
+    const svg = d3.select("svg")
+      .attr("width",  width)
+      .attr("height", height);
+
+    // Tooltip reference
+    const tooltip = d3.select("#tooltip");
+
+    // Bubble radius scale: bigger value => bigger circle
+    const maxValue = d3.max(data, d => d.value);
+    const radiusScale = d3.scaleSqrt()
+      .domain([0, maxValue])
+      .range([10, 80]);
+
+    // Color scale: bigger value => darker blue
+    const colorScale = d3.scaleSequential(d3.interpolateBlues)
+      .domain([0, maxValue]); // 0 => light, max => dark
+
+    // Assign radius only (no forced starting x/y).
+    data.forEach(d => {
+      d.radius = radiusScale(d.value);
+      // We omit d.x, d.y so that the force simulation picks random initial positions
+    });
+
+    // Force simulation (no extra x or y forces => they'll cluster near the center)
+    const simulation = d3.forceSimulation(data)
+      .force("charge", d3.forceManyBody().strength(0))
+      .force("collide", d3.forceCollide().radius(d => d.radius + 2))
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      .on("tick", ticked);
+
+    // Create bubble groups
+    const node = svg.selectAll(".bubbleGroup")
+      .data(data)
+      .enter()
+      .append("g")
+        .attr("class", "bubbleGroup");
+
+    // Circles
+    const circles = node.append("circle")
+      .attr("class", "bubble")
+      .attr("r", d => d.radius)
+      .attr("fill", d => colorScale(d.value))
+      .on("mouseover", (event, d) => {
+        tooltip
+          .style("opacity", 1)
+          .html(`
+            <strong>${d.category}</strong><br/>
+            ${d.info}<br/>
+            ${d.value} ICU Admissions
+          `)
+          .style("left", (event.pageX + 10) + "px")
+          .style("top",  (event.pageY - 40) + "px");
+      })
+      .on("mousemove", event => {
+        tooltip
+          .style("left", (event.pageX + 10) + "px")
+          .style("top",  (event.pageY - 40) + "px");
+      })
+      .on("mouseout", () => {
+        tooltip.style("opacity", 0);
+      });
+
+    // Store original radius for toggle shrink/expand
+    circles.each(function(d) {
+      d.originalRadius = d.radius;
+    });
+
+    // Labels
+    node.append("text")
+      .text(d => d.category);
+
+    // Keep circles in view
+    function ticked() {
+      node.each(d => {
+        // Constrain x, y so bubble doesn't get cut off
+        d.x = Math.max(d.radius, Math.min(width  - d.radius, d.x));
+        d.y = Math.max(d.radius, Math.min(height - d.radius, d.y));
+      });
+      node.attr("transform", d => `translate(${d.x}, ${d.y})`);
+    }
+
+    // ---- WRITE-UP TOGGLE ----
+    const writeUpBtn = document.getElementById("writeUpBtn");
+    let writeUpVisible = false;
+
+    writeUpBtn.addEventListener("click", () => {
+      writeUpVisible = !writeUpVisible;
+      if (writeUpVisible) {
+        // Show write-up
+        document.getElementById("writeUp").style.display = "block";
+        writeUpBtn.textContent = "Close Write Up";
+        // Shrink bubbles
+        circles
+          .transition()
+          .duration(600)
+          .attr("r", d => d.originalRadius / 2);
+      } else {
+        // Hide write-up
+        document.getElementById("writeUp").style.display = "none";
+        writeUpBtn.textContent = "Write Up";
+        // Restore bubble size
+        circles
+          .transition()
+          .duration(600)
+          .attr("r", d => d.originalRadius);
+      }
+    });
+  </script>
+</body>
+</html>
